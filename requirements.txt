@@ -1,7 +1,2 @@
 Flask
-sqlite3
-hashlib
-secrets
-datetime
-functools
 redis
