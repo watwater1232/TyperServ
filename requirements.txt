@@ -1,3 +1,4 @@
 Flask
 redis
 gunicorn
+flask_cors
