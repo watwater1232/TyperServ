@@ -10,13 +10,11 @@ import socket
 import os
 
 app = Flask(__name__)
-# Включаем CORS для всех доменов, чтобы админка могла подключаться
-CORS(app)
+CORS(app)  # Включаем CORS для всех доменов
 
 # Подключение к Redis
 redis_url = os.getenv("REDIS_URL", "redis://red-d2m4543uibrs73fqt7c0:6379")
 try:
-    # Используем from_url для более гибкого подключения
     r = redis.from_url(redis_url, decode_responses=True)
     r.ping()
     print("Успешное подключение к Redis!")
@@ -26,20 +24,13 @@ except (redis.exceptions.ConnectionError, socket.gaierror) as e:
 
 # Инициализация базы данных (Redis)
 def init_db():
-    # Эта функция теперь вызывается до запуска сервера,
-    # что гарантирует создание админа даже при использовании Gunicorn.
     if r is None:
         print("Redis не доступен. Пропускаем инициализацию базы данных.")
         return
-        
-    # Создаем админа по умолчанию (admin/admin123)
     admin_password = hashlib.sha256('admin123'.encode()).hexdigest()
-    # Используем HASH для хранения данных пользователя
     r.hset('users:admin', 'password_hash', admin_password)
     print("База данных инициализирована. Админ 'admin' создан.")
 
-# Вызываем функцию инициализации сразу после подключения к Redis.
-# Это гарантирует, что админ будет создан при каждом запуске приложения.
 init_db()
 
 # Декоратор для проверки авторизации
@@ -51,6 +42,16 @@ def require_auth(f):
             return jsonify({'success': False, 'message': 'Не авторизован'}), 401
         return f(*args, **kwargs)
     return decorated_function
+
+# Очистка устаревших токенов (можно запускать периодически)
+def cleanup_tokens():
+    if r is None:
+        return
+    current_time = datetime.datetime.now().timestamp()
+    # Предположим, что токены устаревают через 1 час (3600 секунд)
+    for token in r.smembers('auth_tokens'):
+        # Здесь можно добавить логику проверки времени создания токена, если вы его сохраняете
+        r.srem('auth_tokens', token)  # Упрощенная очистка (убираем все токены при рестарте)
 
 # API для авторизации админа
 @app.route('/api/login', methods=['POST'])
@@ -88,21 +89,24 @@ def generate_key():
     if not data or 'days' not in data:
         return jsonify({'success': False, 'message': 'Неверные данные'}), 400
     
-    days = int(data['days'])
+    try:
+        days = int(data['days'])
+        if days <= 0:
+            return jsonify({'success': False, 'message': 'Количество дней должно быть больше 0'}), 400
+    except ValueError:
+        return jsonify({'success': False, 'message': 'Неверный формат дней'}), 400
     
     key_value = secrets.token_urlsafe(16)
     created_at = datetime.datetime.now().isoformat()
     
-    # Храним данные ключа в HASH
     key_data = {
         'key_value': key_value,
         'days': days,
         'created_at': created_at,
-        'is_active': '0', # 0 - не активирован, 1 - активирован
+        'is_active': '0'
     }
     
     r.hmset(f'keys:{key_value}', key_data)
-    # Добавляем ключ в SET для быстрого поиска
     r.sadd('all_keys', key_value)
     
     return jsonify({
@@ -125,9 +129,8 @@ def get_all_keys():
     for key_value in key_values:
         key_data = r.hgetall(f'keys:{key_value}')
         
-        # Проверяем, существует ли ключ в базе данных
         if not key_data:
-            r.srem('all_keys', key_value) # Удаляем несуществующий ключ из списка
+            r.srem('all_keys', key_value)
             continue
             
         is_active = key_data.get('is_active') == '1'
@@ -138,14 +141,10 @@ def get_all_keys():
             if activated_at_str:
                 activated_at = datetime.datetime.fromisoformat(activated_at_str)
                 days_left = (activated_at + datetime.timedelta(days=int(key_data.get('days'))) - datetime.datetime.now()).days
-                
                 if days_left > 0:
                     status = f"Активен, осталось {days_left} дней"
                 else:
                     status = "Срок действия истёк"
-                    # Можно добавить логику для автоматического удаления ключа
-                    # r.delete(f'keys:{key_value}')
-                    # r.srem('all_keys', key_value)
             else:
                 status = "Активен"
         
@@ -158,7 +157,6 @@ def get_all_keys():
             'activated_at': key_data.get('activated_at') or 'Не активирован'
         })
         
-    # Сортируем по дате создания
     keys.sort(key=lambda x: x['created_at'], reverse=True)
     
     return jsonify({'success': True, 'keys': keys})
@@ -193,17 +191,14 @@ def activate_key():
         if activated_at_str:
             activated_at = datetime.datetime.fromisoformat(activated_at_str)
             expires_at = activated_at + datetime.timedelta(days=int(key_data.get('days')))
-            
             if datetime.datetime.now() > expires_at:
-                return jsonify({'success': False, 'message': 'Срок действия ключа истёк'}), 410
-            
+                return jsonify({'success': False, 'message': 'Срок действия ключа истек'}), 410
             return jsonify({
                 'success': True,
                 'message': 'Ключ уже активирован',
                 'expires_at': expires_at.isoformat()
             })
     
-    # Активируем ключ
     activated_at = datetime.datetime.now()
     r.hset(f'keys:{key_value}', 'is_active', '1')
     r.hset(f'keys:{key_value}', 'hwid', hwid)
@@ -246,7 +241,7 @@ def check_key():
     expires_at = datetime.datetime.fromisoformat(activated_at_str) + datetime.timedelta(days=int(key_data.get('days')))
     
     if datetime.datetime.now() > expires_at:
-        return jsonify({'success': False, 'message': 'Срок действия ключа истёк'}), 410
+        return jsonify({'success': False, 'message': 'Срок действия ключа истек'}), 410
     
     return jsonify({
         'success': True,
@@ -267,10 +262,8 @@ def delete_key():
         
     key_value = data['key']
     
-    # Удаляем ключ
     deleted_count = r.delete(f'keys:{key_value}')
     if deleted_count > 0:
-        # Удаляем ключ из набора
         r.srem('all_keys', key_value)
         return jsonify({'success': True, 'message': 'Ключ успешно удален'})
     else:
