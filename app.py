@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import redis
 import hashlib
@@ -52,6 +52,20 @@ def cleanup_tokens():
     for token in r.smembers('auth_tokens'):
         # Здесь можно добавить логику проверки времени создания токена, если вы его сохраняете
         r.srem('auth_tokens', token)  # Упрощенная очистка (убираем все токены при рестарте)
+
+# =================== НОВЫЙ МАРШРУТ ДЛЯ СТАТИЧЕСКИХ ФАЙЛОВ ===================
+# Этот маршрут должен идти ПЕРЕД if __name__ == "__main__":
+@app.route('/<path:filename>')
+def download_file(filename):
+    """Отдает файлы из папки 'static'."""
+    # Простая защита от обхода путей (не обязательно, но рекомендуется)
+    if '..' in filename or filename.startswith('/'):
+        return jsonify({'success': False, 'message': 'Неверный путь к файлу'}), 400
+    try:
+        return send_from_directory('static', filename, as_attachment=True)
+    except FileNotFoundError:
+        return jsonify({'success': False, 'message': 'Файл не найден'}), 404
+# ============================================================================
 
 # API для авторизации админа
 @app.route('/api/login', methods=['POST'])
