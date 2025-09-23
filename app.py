@@ -94,7 +94,7 @@ def generate_key():
         return jsonify({'success': False, 'message': 'Сервер Redis недоступен'}), 503
     data = request.get_json()
     # Проверяем обязательные поля, включая version
-    if not data or 'days' not in data or 'version' not in data: # <<< ДОБАВЛЕНО 'version'
+    if not data or 'days' not in data or 'version' not in  # <<< ДОБАВЛЕНО 'version'
         return jsonify({'success': False, 'message': 'Неверные данные: отсутствует days или version'}), 400 # <<< ИЗМЕНЕНО
     try:
         days = int(data['days'])
@@ -138,7 +138,7 @@ def get_all_keys():
     keys = []
     for key_value in key_values:
         key_data = r.hgetall(f'keys:{key_value}')
-        if not key_data:
+        if not key_
             r.srem('all_keys', key_value)
             continue
         # Получаем версию
@@ -175,7 +175,7 @@ def activate_key():
         return jsonify({'success': False, 'message': 'Сервер Redis недоступен'}), 503
     data = request.get_json()
     # Проверяем обязательные поля, включая version_from_client
-    if not data or 'key' not in data or 'hwid' not in data or 'version' not in data: # <<< ДОБАВЛЕНО 'version'
+    if not data or 'key' not in data or 'hwid' not in data or 'version' not in  # <<< ДОБАВЛЕНО 'version'
         return jsonify({'success': False, 'message': 'Неверные данные: отсутствует key, hwid или version'}), 400 # <<< ИЗМЕНЕНО
     key_value = data['key']
     hwid = data['hwid']
@@ -187,8 +187,12 @@ def activate_key():
 
     # Проверяем, соответствует ли версия ключа версии клиента
     key_version = key_data.get('version', 'unknown') # <<< ДОБАВЛЕНО
-    if key_version != client_version: # <<< ДОБАВЛЕНО
-        return jsonify({'success': False, 'message': f'Ключ предназначен для версии "{key_version}", а не "{client_version}".'}), 400 # <<< ДОБАВЛЕНО
+    # ПРАВИЛО: standard ключ может быть активирован ТОЛЬКО для standard версии.
+    # special ключ может быть активирован для standard или special версии.
+    if key_version == 'standard' and client_version != 'standard':
+        return jsonify({'success': False, 'message': f'Ключ версии "{key_version}" не может быть активирован для версии "{client_version}".'}), 400 # <<< ИЗМЕНЕНО
+    # Для special ключа проверка не нужна, он подходит обеим версиям.
+    # if key_version != client_version: # Это было раньше, теперь логика другая
 
     is_active = key_data.get('is_active') == '1'
     if is_active:
@@ -224,7 +228,7 @@ def check_key():
     if r is None:
         return jsonify({'success': False, 'message': 'Сервер Redis недоступен'}), 503
     data = request.get_json()
-    if not data or 'key' not in data or 'hwid' not in data or 'version' not in data: # <<< ДОБАВЛЕНО 'version'
+    if not data or 'key' not in data or 'hwid' not in data or 'version' not in  # <<< ДОБАВЛЕНО 'version'
         return jsonify({'success': False, 'message': 'Неверные данные'}), 400
     key_value = data['key']
     hwid = data['hwid']
@@ -236,8 +240,12 @@ def check_key():
     
     # Проверяем версию ключа
     key_version = key_data.get('version', 'unknown') # <<< ДОБАВЛЕНО
-    if key_version != client_version: # <<< ДОБАВЛЕНО
-        return jsonify({'success': False, 'message': f'Ключ предназначен для версии "{key_version}", а не "{client_version}".'}), 400 # <<< ДОБАВЛЕНО
+    # ПРАВИЛО: standard ключ может быть проверен ТОЛЬКО для standard версии.
+    # special ключ может быть проверен для standard или special версии.
+    if key_version == 'standard' and client_version != 'standard':
+        return jsonify({'success': False, 'message': f'Ключ версии "{key_version}" не может быть проверен для версии "{client_version}".'}), 400 # <<< ИЗМЕНЕНО
+    # Для special ключа проверка не нужна, он подходит обеим версиям.
+    # if key_version != client_version: # Это было раньше, теперь логика другая
 
     if key_data.get('is_active') != '1':
         return jsonify({'success': False, 'message': 'Ключ не активирован'}), 401
