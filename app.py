@@ -86,7 +86,7 @@ def login():
     else:
         return jsonify({'success': False, 'message': 'Неверный логин или пароль'}), 401
 
-# API для генерации ключа - ДОБАВЛЕН version
+# API для генерации ключа - ДОБАВЛЕНО поле version
 @app.route('/api/generate', methods=['POST'])
 @require_auth
 def generate_key():
@@ -128,7 +128,7 @@ def generate_key():
         'version': version # <<< ДОБАВЛЕНО
     })
 
-# API для получения списка ключей - ДОБАВЛЕН version в ответ
+# API для получения списка ключей - ДОБАВЛЕНО поле version в ответ
 @app.route('/api/keys', methods=['GET'])
 @require_auth
 def get_all_keys():
