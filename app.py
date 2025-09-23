@@ -72,18 +72,13 @@ def download_file(filename):
 def login():
     if r is None:
         return jsonify({'success': False, 'message': 'Сервер Redis недоступен'}), 503
-        
     data = request.get_json()
-    
     if not data or 'username' not in data or 'password' not in data:
         return jsonify({'success': False, 'message': 'Неверные данные'}), 400
-    
     username = data['username']
     password = data['password']
     password_hash = hashlib.sha256(password.encode()).hexdigest()
-    
     user_data = r.hgetall(f'users:{username}')
-    
     if user_data and user_data.get('password_hash') == password_hash:
         auth_token = secrets.token_hex(16)
         r.sadd('auth_tokens', auth_token)
@@ -91,65 +86,65 @@ def login():
     else:
         return jsonify({'success': False, 'message': 'Неверный логин или пароль'}), 401
 
-# API для генерации ключа
+# API для генерации ключа - ДОБАВЛЕН version
 @app.route('/api/generate', methods=['POST'])
 @require_auth
 def generate_key():
     if r is None:
         return jsonify({'success': False, 'message': 'Сервер Redis недоступен'}), 503
-    
     data = request.get_json()
-    
-    if not data or 'days' not in data:
-        return jsonify({'success': False, 'message': 'Неверные данные'}), 400
-    
+    # Проверяем обязательные поля, включая version
+    if not data or 'days' not in data or 'version' not in data: # <<< ДОБАВЛЕНО 'version'
+        return jsonify({'success': False, 'message': 'Неверные данные: отсутствует days или version'}), 400 # <<< ИЗМЕНЕНО
     try:
         days = int(data['days'])
         if days <= 0:
             return jsonify({'success': False, 'message': 'Количество дней должно быть больше 0'}), 400
     except ValueError:
         return jsonify({'success': False, 'message': 'Неверный формат дней'}), 400
-    
+
+    # Проверяем корректность версии
+    version = data['version']
+    if version not in ['standard', 'special']: # <<< ДОБАВЛЕНО
+         return jsonify({'success': False, 'message': 'Неверная версия. Допустимые значения: standard, special'}), 400 # <<< ДОБАВЛЕНО
+
     key_value = secrets.token_urlsafe(16)
     created_at = datetime.datetime.now().isoformat()
-    
     key_data = {
         'key_value': key_value,
         'days': days,
+        'version': version, # <<< ДОБАВЛЕНО
         'created_at': created_at,
         'is_active': '0'
     }
-    
     r.hmset(f'keys:{key_value}', key_data)
     r.sadd('all_keys', key_value)
-    
-    return jsonify({
+    # Возвращаем также версию в ответе
+    return jsonify({ 
         'success': True, 
         'message': 'Ключ успешно сгенерирован', 
         'key': key_value,
-        'days': days
+        'days': days,
+        'version': version # <<< ДОБАВЛЕНО
     })
 
-# API для получения списка ключей
+# API для получения списка ключей - ДОБАВЛЕН version в ответ
 @app.route('/api/keys', methods=['GET'])
 @require_auth
 def get_all_keys():
     if r is None:
         return jsonify({'success': False, 'message': 'Сервер Redis недоступен'}), 503
-        
     key_values = r.smembers('all_keys')
     keys = []
-    
     for key_value in key_values:
         key_data = r.hgetall(f'keys:{key_value}')
-        
         if not key_data:
             r.srem('all_keys', key_value)
             continue
-            
+        # Получаем версию
+        version = key_data.get('version', 'unknown') # <<< ДОБАВЛЕНО
         is_active = key_data.get('is_active') == '1'
         status = "Не активирован"
-        
         if is_active:
             activated_at_str = key_data.get('activated_at')
             if activated_at_str:
@@ -161,46 +156,45 @@ def get_all_keys():
                     status = "Срок действия истёк"
             else:
                 status = "Активен"
-        
         keys.append({
             'key': key_data.get('key_value'),
             'days': int(key_data.get('days')),
+            'version': version, # <<< ДОБАВЛЕНО
             'hwid': key_data.get('hwid') or 'Не привязан',
             'status': status,
             'created_at': key_data.get('created_at'),
             'activated_at': key_data.get('activated_at') or 'Не активирован'
         })
-        
     keys.sort(key=lambda x: x['created_at'], reverse=True)
-    
     return jsonify({'success': True, 'keys': keys})
 
-# API для активации ключа
+# API для активации ключа - ПРОВЕРКА ВЕРСИИ
 @app.route('/api/activate', methods=['POST'])
 def activate_key():
     if r is None:
         return jsonify({'success': False, 'message': 'Сервер Redis недоступен'}), 503
-        
     data = request.get_json()
-    
-    if not data or 'key' not in data or 'hwid' not in data:
-        return jsonify({'success': False, 'message': 'Неверные данные'}), 400
-    
+    # Проверяем обязательные поля, включая version_from_client
+    if not data or 'key' not in data or 'hwid' not in data or 'version' not in data: # <<< ДОБАВЛЕНО 'version'
+        return jsonify({'success': False, 'message': 'Неверные данные: отсутствует key, hwid или version'}), 400 # <<< ИЗМЕНЕНО
     key_value = data['key']
     hwid = data['hwid']
-    
+    client_version = data['version'] # <<< ДОБАВЛЕНО - версия, которую запрашивает клиент
+
     key_data = r.hgetall(f'keys:{key_value}')
-    
     if not key_data:
         return jsonify({'success': False, 'message': 'Ключ не найден'}), 404
-        
+
+    # Проверяем, соответствует ли версия ключа версии клиента
+    key_version = key_data.get('version', 'unknown') # <<< ДОБАВЛЕНО
+    if key_version != client_version: # <<< ДОБАВЛЕНО
+        return jsonify({'success': False, 'message': f'Ключ предназначен для версии "{key_version}", а не "{client_version}".'}), 400 # <<< ДОБАВЛЕНО
+
     is_active = key_data.get('is_active') == '1'
-    
     if is_active:
         current_hwid = key_data.get('hwid')
         if current_hwid and current_hwid != hwid:
             return jsonify({'success': False, 'message': 'Ключ уже привязан к другому устройству'}), 409
-        
         activated_at_str = key_data.get('activated_at')
         if activated_at_str:
             activated_at = datetime.datetime.fromisoformat(activated_at_str)
@@ -212,51 +206,47 @@ def activate_key():
                 'message': 'Ключ уже активирован',
                 'expires_at': expires_at.isoformat()
             })
-    
+
     activated_at = datetime.datetime.now()
     r.hset(f'keys:{key_value}', 'is_active', '1')
     r.hset(f'keys:{key_value}', 'hwid', hwid)
     r.hset(f'keys:{key_value}', 'activated_at', activated_at.isoformat())
-    
     expires_at = activated_at + datetime.timedelta(days=int(key_data.get('days')))
-    
     return jsonify({
         'success': True,
         'message': 'Ключ успешно активирован',
         'expires_at': expires_at.isoformat()
     })
 
-# API для проверки ключа
+# API для проверки ключа - ПРОВЕРКА ВЕРСИИ (если используется)
 @app.route('/api/check', methods=['POST'])
 def check_key():
     if r is None:
         return jsonify({'success': False, 'message': 'Сервер Redis недоступен'}), 503
-        
     data = request.get_json()
-    
-    if not data or 'key' not in data or 'hwid' not in data:
+    if not data or 'key' not in data or 'hwid' not in data or 'version' not in data: # <<< ДОБАВЛЕНО 'version'
         return jsonify({'success': False, 'message': 'Неверные данные'}), 400
-    
     key_value = data['key']
     hwid = data['hwid']
-    
+    client_version = data['version'] # <<< ДОБАВЛЕНО
+
     key_data = r.hgetall(f'keys:{key_value}')
-    
     if not key_data:
         return jsonify({'success': False, 'message': 'Ключ не найден'}), 404
     
+    # Проверяем версию ключа
+    key_version = key_data.get('version', 'unknown') # <<< ДОБАВЛЕНО
+    if key_version != client_version: # <<< ДОБАВЛЕНО
+        return jsonify({'success': False, 'message': f'Ключ предназначен для версии "{key_version}", а не "{client_version}".'}), 400 # <<< ДОБАВЛЕНО
+
     if key_data.get('is_active') != '1':
         return jsonify({'success': False, 'message': 'Ключ не активирован'}), 401
-    
     if key_data.get('hwid') != hwid:
         return jsonify({'success': False, 'message': 'HWID не совпадает'}), 403
-    
     activated_at_str = key_data.get('activated_at')
     expires_at = datetime.datetime.fromisoformat(activated_at_str) + datetime.timedelta(days=int(key_data.get('days')))
-    
     if datetime.datetime.now() > expires_at:
         return jsonify({'success': False, 'message': 'Срок действия ключа истек'}), 410
-    
     return jsonify({
         'success': True,
         'message': 'Ключ действителен',
@@ -269,13 +259,10 @@ def check_key():
 def delete_key():
     if r is None:
         return jsonify({'success': False, 'message': 'Сервер Redis недоступен'}), 503
-        
     data = request.get_json()
     if not data or 'key' not in data:
         return jsonify({'success': False, 'message': 'Неверные данные'}), 400
-        
     key_value = data['key']
-    
     deleted_count = r.delete(f'keys:{key_value}')
     if deleted_count > 0:
         r.srem('all_keys', key_value)
