@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, render_template
 from flask_cors import CORS
 import redis
 import hashlib
@@ -53,8 +53,18 @@ def cleanup_tokens():
         # Здесь можно добавить логику проверки времени создания токена, если вы его сохраняете
         r.srem('auth_tokens', token)  # Упрощенная очистка (убираем все токены при рестарте)
 
-# =================== НОВЫЙ МАРШРУТ ДЛЯ СТАТИЧЕСКИХ ФАЙЛОВ ===================
-# Этот маршрут должен идти ПЕРЕД if __name__ == "__main__":
+# =================== МАРШРУТЫ ДЛЯ АДМИНКИ ===================
+@app.route('/admin')
+def admin_panel():
+    """Админ панель для управления ключами."""
+    return render_template('admin.html')
+
+@app.route('/')
+def index():
+    """Главная страница - перенаправляем на админку."""
+    return render_template('admin.html')
+
+# =================== МАРШРУТ ДЛЯ СТАТИЧЕСКИХ ФАЙЛОВ ===================
 @app.route('/<path:filename>')
 def download_file(filename):
     """Отдает файлы из папки 'static'."""
@@ -168,31 +178,21 @@ def get_all_keys():
     keys.sort(key=lambda x: x['created_at'], reverse=True)
     return jsonify({'success': True, 'keys': keys})
 
-# API для активации ключа - ПРОВЕРКА ВЕРСИИ
+# API для активации ключа - УПРОЩЕННАЯ ВЕРСИЯ
 @app.route('/api/activate', methods=['POST'])
 def activate_key():
     if r is None:
         return jsonify({'success': False, 'message': 'Сервер Redis недоступен'}), 503
     data = request.get_json()
-    # Проверяем обязательные поля, включая version_from_client
-    if not data or 'key' not in data or 'hwid' not in data or 'version' not in data: # ИСПРАВЛЕНО: добавлено 'data' после 'version' not in
-        return jsonify({'success': False, 'message': 'Неверные данные: отсутствует key, hwid или version'}), 400
+    # Проверяем только обязательные поля
+    if not data or 'key' not in data or 'hwid' not in data:
+        return jsonify({'success': False, 'message': 'Неверные данные: отсутствует key или hwid'}), 400
     key_value = data['key']
     hwid = data['hwid']
-    client_version = data['version'] # ДОБАВЛЕНО - версия, которую запрашивает клиент
 
     key_data = r.hgetall(f'keys:{key_value}')
     if not key_data:
         return jsonify({'success': False, 'message': 'Ключ не найден'}), 404
-
-    # Проверяем, соответствует ли версия ключа версии клиента
-    key_version = key_data.get('version', 'unknown') # ДОБАВЛЕНО
-    # ПРАВИЛО: standard ключ может быть активирован ТОЛЬКО для standard версии.
-    # special ключ может быть активирован для standard или special версии.
-    if key_version == 'standard' and client_version != 'standard':
-        return jsonify({'success': False, 'message': f'Ключ версии "{key_version}" не может быть активирован для версии "{client_version}".'}), 400 # ИСПРАВЛЕНО
-    # Для special ключа проверка не нужна, он подходит обеим версиям.
-    # if key_version != client_version: # Это было раньше, теперь логика другая
 
     is_active = key_data.get('is_active') == '1'
     if is_active:
@@ -205,47 +205,44 @@ def activate_key():
             expires_at = activated_at + datetime.timedelta(days=int(key_data.get('days')))
             if datetime.datetime.now() > expires_at:
                 return jsonify({'success': False, 'message': 'Срок действия ключа истек'}), 410
+            # Возвращаем информацию о лицензии
+            license_type = key_data.get('version', 'standard')
             return jsonify({
                 'success': True,
                 'message': 'Ключ уже активирован',
-                'expires_at': expires_at.isoformat()
+                'expires_at': expires_at.isoformat(),
+                'license_type': license_type
             })
 
+    # Активируем ключ
     activated_at = datetime.datetime.now()
     r.hset(f'keys:{key_value}', 'is_active', '1')
     r.hset(f'keys:{key_value}', 'hwid', hwid)
     r.hset(f'keys:{key_value}', 'activated_at', activated_at.isoformat())
     expires_at = activated_at + datetime.timedelta(days=int(key_data.get('days')))
+    license_type = key_data.get('version', 'standard')
+    
     return jsonify({
         'success': True,
         'message': 'Ключ успешно активирован',
-        'expires_at': expires_at.isoformat()
+        'expires_at': expires_at.isoformat(),
+        'license_type': license_type
     })
 
-# API для проверки ключа - ПРОВЕРКА ВЕРСИИ (если используется)
+# API для проверки ключа - УПРОЩЕННАЯ ВЕРСИЯ
 @app.route('/api/check', methods=['POST'])
 def check_key():
     if r is None:
         return jsonify({'success': False, 'message': 'Сервер Redis недоступен'}), 503
     data = request.get_json()
-    if not data or 'key' not in data or 'hwid' not in data or 'version' not in data: # ИСПРАВЛЕНО: добавлено 'data' после 'version' not in
+    if not data or 'key' not in data or 'hwid' not in data:
         return jsonify({'success': False, 'message': 'Неверные данные'}), 400
     key_value = data['key']
     hwid = data['hwid']
-    client_version = data['version'] # ДОБАВЛЕНО
 
     key_data = r.hgetall(f'keys:{key_value}')
     if not key_data:
         return jsonify({'success': False, 'message': 'Ключ не найден'}), 404
-
-    # Проверяем версию ключа
-    key_version = key_data.get('version', 'unknown') # ДОБАВЛЕНО
-    # ПРАВИЛО: standard ключ может быть проверен ТОЛЬКО для standard версии.
-    # special ключ может быть проверен для standard или special версии.
-    if key_version == 'standard' and client_version != 'standard':
-        return jsonify({'success': False, 'message': f'Ключ версии "{key_version}" не может быть проверен для версии "{client_version}".'}), 400 # ИСПРАВЛЕНО
-    # Для special ключа проверка не нужна, он подходит обеим версиям.
-    # if key_version != client_version: # Это было раньше, теперь логика другая
 
     if key_data.get('is_active') != '1':
         return jsonify({'success': False, 'message': 'Ключ не активирован'}), 401
@@ -258,7 +255,8 @@ def check_key():
     return jsonify({
         'success': True,
         'message': 'Ключ действителен',
-        'expires_at': expires_at.isoformat()
+        'expires_at': expires_at.isoformat(),
+        'license_type': key_data.get('version', 'standard')
     })
 
 # API для удаления ключа
