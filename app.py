@@ -113,7 +113,6 @@ def generate_key():
     key_data = {
         'key_value': key_value,
         'days': days,
-        'version': version, # ДОБАВЛЕНО
         'created_at': created_at,
         'is_active': '0'
     }
@@ -125,7 +124,6 @@ def generate_key():
         'message': 'Ключ успешно сгенерирован',
         'key': key_value,
         'days': days,
-        'version': version # ДОБАВЛЕНО
     })
 
 # API для получения списка ключей - ДОБАВЛЕНО поле version в ответ
@@ -282,3 +280,4 @@ def delete_key():
 if __name__ == "__main__":
     print("Запуск локального сервера...")
     app.run(host='0.0.0.0', port=5000, debug=True)
+
