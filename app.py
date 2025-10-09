@@ -12,7 +12,7 @@ app = Flask(__name__)
 CORS(app)
 
 # Подключение к Redis
-redis_url = os.getenv("REDIS_URL", "red-d2m4543uibrs73fqt7c0")
+redis_url = os.getenv("REDIS_URL", "redis://red-d2m4543uibrs73fqt7c0:6379")
 try:
     r = redis.from_url(redis_url, decode_responses=True)
     r.ping()
@@ -233,4 +233,5 @@ def delete_key():
 if __name__ == "__main__":
     print("Запуск сервера...")
     app.run(host='0.0.0.0', port=5000, debug=True)
+
 
